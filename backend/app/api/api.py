@@ -8,11 +8,11 @@ from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 
-import models
-import schemas
-from database import engine, get_db
-import auth
-from langchain_ops import process_and_embed_document, get_answer
+from app.model import models
+from app.schemas import schemas
+from app.database.database import engine, get_db
+from app.auth import auth
+from app.LLM.langchain_ops import process_and_embed_document, get_answer
 
 # Creates DB tables if they don't exist
 models.Base.metadata.create_all(bind=engine)
@@ -30,6 +30,10 @@ app.add_middleware(
 
 UPLOAD_DIR = "uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+@app.get("/")
+def root():
+    return {"message": "Server is running perfectly! Go to /docs to see the API interactively."}
 
 # ----------------
 # Authentication
@@ -49,6 +53,7 @@ def register(user: schemas.UserCreate, db: Session = Depends(get_db)):
     
     new_user = models.User(
         username=user.username,
+        email=user.email,
         hashed_password=hashed_password,
         role=role
     )

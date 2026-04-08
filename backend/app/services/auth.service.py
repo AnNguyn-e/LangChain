@@ -7,9 +7,9 @@ from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 import os
 
-from database import get_db
-import models
-import schemas
+from app.database.database import get_db
+from app.model import models
+from app.schemas import schemas
 
 SECRET_KEY = "my_super_secret_key_for_this_project" # Replace with real secret in production
 ALGORITHM = "HS256"
