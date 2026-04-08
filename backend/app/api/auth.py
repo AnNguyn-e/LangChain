@@ -38,3 +38,8 @@ def read_users_me(current_user:model.User=Depends(auth.get_current_user)):
 @router.post("logout")
 def logout(current_user:model.User=Depends(auth.get_current_user)):
     return {"message":"Logout successful"}
+
+@router.post("refreshAccessToken", response_model=schemas.Token)
+def refresh_access_token(current_user:model.User=Depends(auth.get_current_user)):
+    access_token = auth.create_access_token(data={"sub":current_user.username})
+    return {"access_token":access_token,"token_type":"bearer"}
