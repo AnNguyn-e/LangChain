@@ -100,7 +100,6 @@ class UserResponse(BaseModel):
     role: RoleEnum
 
     class Config:
-        orm_mode = True
         from_attributes = True
 
 
@@ -137,6 +136,31 @@ class TagResponse(TagBase):
         from_attributes = True
 
 # ─────────────────────────────────────────────
+# Document Metadata Schemas
+# ─────────────────────────────────────────────
+
+class DocumentMetadataResponse(BaseModel):
+    id: int
+    title: Optional[str] = None
+    author: Optional[str] = None
+    subject: Optional[str] = None
+    creator: Optional[str] = None
+    producer: Optional[str] = None
+    keywords: Optional[str] = None
+    category: Optional[str] = None
+    language: Optional[str] = None
+    summary: Optional[str] = None
+    page_count: Optional[int] = None
+    source_url: Optional[str] = None
+    extra_data: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# ─────────────────────────────────────────────
 # Document Schemas
 # ─────────────────────────────────────────────
 
@@ -152,9 +176,9 @@ class DocumentResponse(BaseModel):
     error_message: Optional[str] = None
     created_at: datetime
     tags: List[TagResponse] = []
+    doc_metadata: Optional[DocumentMetadataResponse] = None
 
     class Config:
-        orm_mode = True
         from_attributes = True
 
 
@@ -168,7 +192,6 @@ class UploadDocumentResponse(BaseModel):
     message: str
 
     class Config:
-        orm_mode = True
         from_attributes = True
 
 class BulkUploadResponse(BaseModel):
@@ -180,9 +203,30 @@ class BulkUploadResponse(BaseModel):
 # Chat Schemas
 # ─────────────────────────────────────────────
 
-class ChatRequest(BaseModel):
+class ChatCreateRequest(BaseModel):
     query: str
 
-class ChatResponse(BaseModel):
+class ChatMessageResponse(BaseModel):
+    id: int
+    session_id: int
+    question: str
     answer: str
-    sources: List[str]
+    sources: Optional[str] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class ChatSessionCreate(BaseModel):
+    title: Optional[str] = "New Chat"
+
+class ChatSessionResponse(BaseModel):
+    id: int
+    user_id: int
+    title: str
+    created_at: datetime
+    # We optionally include chats
+    chats: List[ChatMessageResponse] = []
+
+    class Config:
+        from_attributes = True

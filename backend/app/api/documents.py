@@ -1,5 +1,5 @@
 from typing import List, Optional
-from fastapi import APIRouter, Depends, UploadFile, File, Query
+from fastapi import APIRouter, Depends, UploadFile, File, Query, BackgroundTasks
 from sqlalchemy.orm import Session
 
 from app.database.database import get_db
@@ -12,26 +12,36 @@ router = APIRouter(prefix="/documents", tags=["documents"])
 
 @router.post("/upload-multiple", response_model=schemas.BulkUploadResponse)
 def upload_multiple_documents(
+    background_tasks: BackgroundTasks,
     files: List[UploadFile] = File(...),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Tải lên nhiều tài liệu cùng lúc."""
+    """Tải lên nhiều tài liệu cùng lúc. Xử lý (chunk + embed) chạy ngầm."""
     results = []
-    errors = []
-    
+    errors  = []
+
     for file in files:
-        # Re-seek file just in case
         file.file.seek(0)
         try:
-            res = document_service.upload_document(file, current_user, db)
+            res = document_service.upload_document(file, current_user, db, background_tasks)
             results.append(res)
         except Exception as e:
             errors.append({"filename": file.filename, "error": str(e)})
-            
+
     return {"results": results, "errors": errors}
 
-@router.get("/", response_model=List[schemas.DocumentResponse])
+
+@router.get("/{document_id}/status", response_model=schemas.DocumentResponse, summary="Kiểm tra trạng thái xử lý")
+def get_document_status(
+    document_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Lấy thông tin và trạng thái xử lý của một tài liệu."""
+    return document_service.get_document_by_id(document_id, current_user, db)
+
+@router.get("", response_model=List[schemas.DocumentResponse])
 def list_documents(
     search: Optional[str] = Query(None, description="Tìm kiếm theo tên file"),
     tag_id: Optional[int] = Query(None, description="Lọc theo tag"),
@@ -69,7 +79,7 @@ def create_tag(
     """Tạo thẻ mới."""
     return document_service.create_tag(tag_in, db)
 
-@router.post("/{document_id}/tags/{tag_id}")
+@router.post("/{document_id}/tags/{tag_id}", summary="Gắn tag vào tài liệu")
 def assign_tag(
     document_id: int,
     tag_id: int,
@@ -78,3 +88,28 @@ def assign_tag(
 ):
     """Gắn thẻ cho tài liệu."""
     return document_service.assign_tag_to_document(document_id, tag_id, db)
+
+
+@router.delete("/{document_id}/tags/{tag_id}", summary="Gỡ tag khỏi tài liệu")
+def remove_tag(
+    document_id: int,
+    tag_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Gỡ một tag ra khỏi tài liệu. Chỉ chủ sở hữu hoặc Admin mới có quyền."""
+    return document_service.remove_tag_from_document(document_id, tag_id, current_user, db)
+
+
+@router.delete("/tags/{tag_id}", summary="Xóa tag khỏi hệ thống")
+def delete_tag(
+    tag_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Xóa tag khỏi hệ thống (chỉ Admin). Tag sẽ tự động được gỡ khỏi tất cả document."""
+    from app.model.user_model import RoleEnum
+    if current_user.role != RoleEnum.ADMIN:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail="Chỉ Admin mới có thể xóa tag")
+    return document_service.delete_tag(tag_id, db)

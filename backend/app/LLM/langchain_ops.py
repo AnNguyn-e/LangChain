@@ -137,3 +137,51 @@ Trả lời:"""
     answer = chain.invoke({"context": context, "question": query})
     
     return answer, sources
+
+import json
+
+def get_answer_stream(query: str, user_id: int = None, is_admin: bool = False):
+    """Retrieve internal data and generate answer via stream."""
+    filter_dict = {}
+    if not is_admin and user_id is not None:
+        filter_dict["user_id"] = user_id
+        
+    retriever = vectorstore.as_retriever(
+        search_kwargs={
+            "k": 3,
+            "filter": filter_dict if filter_dict else None
+        }
+    )
+    
+    docs = retriever.invoke(query)
+    sources = list(set([doc.metadata.get("source", "Unknown") for doc in docs]))
+    context = "\n\n".join([doc.page_content for doc in docs])
+    
+    if not docs:
+         msg = "Tôi không tìm thấy thông tin nào liên quan đến câu hỏi trong các tài liệu hiện có."
+         yield f"data: {json.dumps({'content': msg})}\n\n"
+         yield f"data: {json.dumps({'sources': sources})}\n\n"
+         yield "data: [DONE]\n\n"
+         return
+
+    template = """Bạn là trợ lý AI hữu ích hỗ trợ nhân viên nội bộ công ty quản lý tài liệu.
+Sử dụng các thông tin ngữ cảnh được cung cấp dưới đây để trả lời câu hỏi, thông tin này được lấy từ dữ liệu nội bộ.
+Nếu thông tin không liên quan gì, hãy báo rằng bạn không có câu trả lời.
+KHÔNG được bịa đặt thông tin. Luôn trả lời bằng tiếng Việt một cách rõ ràng.
+
+Ngữ cảnh:
+{context}
+
+Câu hỏi: {question}
+
+Trả lời:"""
+    prompt = PromptTemplate.from_template(template)
+    
+    chain = prompt | llm | StrOutputParser()
+    
+    for chunk in chain.stream({"context": context, "question": query}):
+        yield f"data: {json.dumps({'content': chunk})}\n\n"
+        
+    # Send the final sources at the end
+    yield f"data: {json.dumps({'sources': sources})}\n\n"
+    yield "data: [DONE]\n\n"

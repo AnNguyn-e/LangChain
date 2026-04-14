@@ -1,22 +1,35 @@
 import os
-import shutil
 import hashlib
-from typing import List, Dict, Any, Optional
+from typing import List, Optional
 
-from fastapi import HTTPException, UploadFile
+from fastapi import HTTPException, UploadFile, BackgroundTasks
 from sqlalchemy.orm import Session
-from sqlalchemy import func
 
 from app.model.user_model import User, RoleEnum
 from app.model.document_model import Document
 from app.model.tag_model import Tag
 from app.schemas import schemas
-from app.LLM.langchain_ops import process_and_embed_document
+from app.services.document_processor import run_processing_pipeline
 
 UPLOAD_DIR = "uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-MAX_FILE_SIZE = 50 * 1024 * 1024 # 50MB
+MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
+
+ALLOWED_EXTENSIONS = {
+    # Documents
+    ".pdf", ".txt", ".docx", ".doc",
+    # Spreadsheets
+    ".csv", ".xlsx", ".xls",
+    # Presentations
+    ".pptx", ".ppt",
+    # Web / Markup
+    ".html", ".htm", ".md",
+    # Data
+    ".json",
+    # Images (OCR)
+    ".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".webp",
+}
 
 def get_file_hash(file_content: bytes) -> str:
     """Tính SHA-256 hash của nội dung file."""
@@ -25,88 +38,91 @@ def get_file_hash(file_content: bytes) -> str:
 def upload_document(
     file: UploadFile,
     current_user: User,
-    db: Session
+    db: Session,
+    background_tasks: BackgroundTasks,
 ) -> schemas.UploadDocumentResponse:
     """
-    Xử lý upload tài liệu: check size, check hash (trùng lặp), lưu disk, tạo record DB, và embedding.
+    Upload tài liệu: validate → lưu disk → tạo DB record → trả về ngay.
+    Quá trình xử lý (chunk + embed) chạy ngầm trong background.
     """
     # 1. Kiểm tra định dạng
-    allowed_extensions = (".pdf", ".txt", ".docx")
-    filename = file.filename
+    filename = file.filename or "unknown"
     ext = os.path.splitext(filename)[1].lower()
-    if ext not in allowed_extensions:
-        raise HTTPException(status_code=400, detail=f"Định dạng {ext} không được hỗ trợ. Chỉ nhận PDF, TXT, DOCX.")
+    if ext not in ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Định dạng '{ext}' không được hỗ trợ. Chấp nhận: {', '.join(ALLOWED_EXTENSIONS)}"
+        )
 
-    # 2. Đọc nội dung để kiểm tra kích thước và tính hash
+    # 2. Đọc nội dung, kiểm tra kích thước, tính hash
     try:
-        content = file.file.read()
+        content   = file.file.read()
         file_size = len(content)
-        
         if file_size > MAX_FILE_SIZE:
-            raise HTTPException(status_code=400, detail=f"File {filename} vượt quá giới hạn 50MB")
-        
+            raise HTTPException(status_code=400, detail=f"File vượt quá giới hạn 50 MB")
         file_hash = get_file_hash(content)
-        
-        # 3. Kiểm tra trùng lặp (Deduplication)
-        existing_doc = db.query(Document).filter(Document.file_hash == file_hash).first()
-        if existing_doc:
-            raise HTTPException(status_code=400, detail=f"Tài liệu '{filename}' đã tồn tại trong hệ thống (trùng nội dung).")
 
+        existing = db.query(Document).filter(Document.file_hash == file_hash).first()
+        if existing:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Tài liệu '{filename}' đã tồn tại trong hệ thống (trùng nội dung)."
+            )
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Lỗi khi đọc file: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Lỗi khi đọc file: {e}")
     finally:
-        file.file.seek(0) # Reset pointer
+        file.file.seek(0)
 
-    # 4. Lưu file xuống disk
-    file_path = os.path.join(UPLOAD_DIR, f"{file_hash}{ext}") # Lưu theo hash để tránh trùng tên
+    # 3. Lưu file xuống disk (tên = hash + ext để tránh trùng)
+    file_path = os.path.join(UPLOAD_DIR, f"{file_hash}{ext}")
     try:
-        with open(file_path, "wb") as buffer:
-            buffer.write(content)
+        with open(file_path, "wb") as buf:
+            buf.write(content)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Không thể lưu tệp: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Không thể lưu tệp: {e}")
 
-    # 5. Tạo bản ghi document
+    # 4. Tạo bản ghi Document với status='processing'
     new_doc = Document(
         filename=filename,
         file_path=file_path,
         file_size=file_size,
-        file_type=ext.replace('.', '').upper(),
+        file_type=ext.lstrip(".").upper(),
         file_hash=file_hash,
         user_id=current_user.id,
-        status="processing"
+        status="processing",
     )
     db.add(new_doc)
     db.commit()
     db.refresh(new_doc)
 
-    try:
-        # 6. Xử lý embedding (chạy đồng bộ cho đơn giản, hoặc async nhiệm vụ sau)
-        num_chunks = process_and_embed_document(file_path, current_user.id)
+    # 5. Đặt lịch chạy pipeline ngầm
+    background_tasks.add_task(
+        run_processing_pipeline,
+        document_id=new_doc.id,
+        file_path=file_path,
+        user_id=current_user.id,
+    )
 
-        new_doc.status = "completed"
-        new_doc.chunk_count = num_chunks
-        db.commit()
-        db.refresh(new_doc)
+    return schemas.UploadDocumentResponse(
+        id=new_doc.id,
+        filename=new_doc.filename,
+        status=new_doc.status,   # "processing"
+        chunk_count=0,
+        created_at=new_doc.created_at,
+        message="Tài liệu đã được nhận. Đang xử lý trong nền..."
+    )
 
-        return schemas.UploadDocumentResponse(
-            id=new_doc.id,
-            filename=new_doc.filename,
-            status=new_doc.status,
-            chunk_count=num_chunks,
-            created_at=new_doc.created_at,
-            message="Xử lý thành công"
-        )
 
-    except Exception as e:
-        new_doc.status = "failed"
-        new_doc.error_message = str(e)
-        db.commit()
-        raise HTTPException(
-            status_code=500,
-            detail=f"Xử lý AI thất bại: {str(e)}"
-        )
+def get_document_by_id(document_id: int, current_user: User, db: Session) -> Document:
+    """Lấy thông tin một document theo id, có kiểm tra quyền."""
+    doc = db.query(Document).filter(Document.id == document_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Không tìm thấy tài liệu")
+    if doc.user_id != current_user.id and current_user.role != RoleEnum.ADMIN:
+        raise HTTPException(status_code=403, detail="Không có quyền xem tài liệu này")
+    return doc
 
 def get_all_documents(
     current_user: User,
@@ -169,8 +185,39 @@ def assign_tag_to_document(doc_id: int, tag_id: int, db: Session):
     tag = db.query(Tag).filter(Tag.id == tag_id).first()
     if not doc or not tag:
         raise HTTPException(status_code=404, detail="Doc hoặc Tag không tồn tại")
-    
+
     if tag not in doc.tags:
         doc.tags.append(tag)
         db.commit()
     return doc
+
+
+def remove_tag_from_document(doc_id: int, tag_id: int, current_user: User, db: Session):
+    """Gỡ một tag khỏi document. Chỉ chủ sở hữu hoặc Admin mới có quyền."""
+    doc = db.query(Document).filter(Document.id == doc_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Không tìm thấy tài liệu")
+
+    if doc.user_id != current_user.id and current_user.role != RoleEnum.ADMIN:
+        raise HTTPException(status_code=403, detail="Không có quyền chỉnh sửa tài liệu này")
+
+    tag = db.query(Tag).filter(Tag.id == tag_id).first()
+    if not tag:
+        raise HTTPException(status_code=404, detail="Không tìm thấy tag")
+
+    if tag in doc.tags:
+        doc.tags.remove(tag)
+        db.commit()
+
+    return {"message": f"Đã gỡ tag '{tag.name}' khỏi tài liệu"}
+
+
+def delete_tag(tag_id: int, db: Session):
+    """Xóa tag khỏi hệ thống. Tag sẽ tự động được gỡ khỏi tất cả document."""
+    tag = db.query(Tag).filter(Tag.id == tag_id).first()
+    if not tag:
+        raise HTTPException(status_code=404, detail="Không tìm thấy tag")
+
+    db.delete(tag)
+    db.commit()
+    return {"message": f"Đã xóa tag '{tag.name}' khỏi hệ thống"}
