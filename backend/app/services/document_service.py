@@ -1,6 +1,7 @@
 import os
 import shutil
-from typing import List
+import hashlib
+from typing import List, Dict, Any, Optional
 
 from fastapi import HTTPException, UploadFile
 from sqlalchemy.orm import Session
@@ -8,12 +9,18 @@ from sqlalchemy import func
 
 from app.model.user_model import User, RoleEnum
 from app.model.document_model import Document
+from app.model.tag_model import Tag
 from app.schemas import schemas
 from app.LLM.langchain_ops import process_and_embed_document
 
 UPLOAD_DIR = "uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
+MAX_FILE_SIZE = 50 * 1024 * 1024 # 50MB
+
+def get_file_hash(file_content: bytes) -> str:
+    """Tính SHA-256 hash của nội dung file."""
+    return hashlib.sha256(file_content).hexdigest()
 
 def upload_document(
     file: UploadFile,
@@ -21,30 +28,52 @@ def upload_document(
     db: Session
 ) -> schemas.UploadDocumentResponse:
     """
-    Xử lý upload tài liệu: lưu disk, tạo record DB, và thực hiện embedding.
+    Xử lý upload tài liệu: check size, check hash (trùng lặp), lưu disk, tạo record DB, và embedding.
     """
-    allowed_extensions = (
-        ".pdf", ".txt", ".csv",
-        ".xlsx", ".xls",
-        ".doc", ".docx",
-        ".png", ".jpg", ".jpeg"
-    )
-    if not file.filename.lower().endswith(allowed_extensions):
-        raise HTTPException(status_code=400, detail="Định dạng tệp không được hỗ trợ")
+    # 1. Kiểm tra định dạng
+    allowed_extensions = (".pdf", ".txt", ".docx")
+    filename = file.filename
+    ext = os.path.splitext(filename)[1].lower()
+    if ext not in allowed_extensions:
+        raise HTTPException(status_code=400, detail=f"Định dạng {ext} không được hỗ trợ. Chỉ nhận PDF, TXT, DOCX.")
 
-    file_path = os.path.join(UPLOAD_DIR, file.filename)
+    # 2. Đọc nội dung để kiểm tra kích thước và tính hash
+    try:
+        content = file.file.read()
+        file_size = len(content)
+        
+        if file_size > MAX_FILE_SIZE:
+            raise HTTPException(status_code=400, detail=f"File {filename} vượt quá giới hạn 50MB")
+        
+        file_hash = get_file_hash(content)
+        
+        # 3. Kiểm tra trùng lặp (Deduplication)
+        existing_doc = db.query(Document).filter(Document.file_hash == file_hash).first()
+        if existing_doc:
+            raise HTTPException(status_code=400, detail=f"Tài liệu '{filename}' đã tồn tại trong hệ thống (trùng nội dung).")
 
-    # Lưu file xuống disk
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Lỗi khi đọc file: {str(e)}")
+    finally:
+        file.file.seek(0) # Reset pointer
+
+    # 4. Lưu file xuống disk
+    file_path = os.path.join(UPLOAD_DIR, f"{file_hash}{ext}") # Lưu theo hash để tránh trùng tên
     try:
         with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+            buffer.write(content)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Không thể lưu tệp: {str(e)}")
 
-    # Tạo bản ghi document trong SQLite với trạng thái "processing"
+    # 5. Tạo bản ghi document
     new_doc = Document(
-        filename=file.filename,
+        filename=filename,
         file_path=file_path,
+        file_size=file_size,
+        file_type=ext.replace('.', '').upper(),
+        file_hash=file_hash,
         user_id=current_user.id,
         status="processing"
     )
@@ -53,10 +82,9 @@ def upload_document(
     db.refresh(new_doc)
 
     try:
-        # Xử lý: load → clean → chunk → embed vào ChromaDB
+        # 6. Xử lý embedding (chạy đồng bộ cho đơn giản, hoặc async nhiệm vụ sau)
         num_chunks = process_and_embed_document(file_path, current_user.id)
 
-        # Cập nhật trạng thái và số chunk
         new_doc.status = "completed"
         new_doc.chunk_count = num_chunks
         db.commit()
@@ -68,85 +96,81 @@ def upload_document(
             status=new_doc.status,
             chunk_count=num_chunks,
             created_at=new_doc.created_at,
-            message=f"Upload và index thành công ({num_chunks} chunks)"
+            message="Xử lý thành công"
         )
 
     except Exception as e:
-        # Cập nhật trạng thái thất bại và lưu lỗi
         new_doc.status = "failed"
         new_doc.error_message = str(e)
         db.commit()
         raise HTTPException(
             status_code=500,
-            detail=f"Xử lý tài liệu thất bại: {str(e)}"
+            detail=f"Xử lý AI thất bại: {str(e)}"
         )
-
 
 def get_all_documents(
     current_user: User,
-    db: Session
+    db: Session,
+    search: Optional[str] = None,
+    tag_id: Optional[int] = None
 ) -> List[Document]:
-    """
-    Lấy danh sách tài liệu dựa trên quyền hạn của người dùng.
-    """
-    if current_user.role == RoleEnum.ADMIN:
-        return db.query(Document).all()
-    else:
-        return db.query(Document).filter(Document.user_id == current_user.id).all()
+    """Lấy danh sách tài liệu có filter."""
+    query = db.query(Document)
+    
+    if current_user.role != RoleEnum.ADMIN:
+        query = query.filter(Document.user_id == current_user.id)
+        
+    if search:
+        query = query.filter(Document.filename.ilike(f"%{search}%"))
+        
+    if tag_id:
+        query = query.join(Document.tags).filter(Tag.id == tag_id)
+        
+    return query.order_by(Document.created_at.desc()).all()
 
-
-def get_stats(
-    current_user: User,
-    db: Session
-):
-    """
-    Thống kê tài liệu: Admin thấy toàn bộ, User thấy cá nhân.
-    """
-    if current_user.role == RoleEnum.ADMIN:
-        total_docs = db.query(Document).count()
-        total_users = db.query(User).count()
-        docs_by_user = (
-            db.query(Document.user_id, func.count(Document.id))
-            .group_by(Document.user_id)
-            .all()
-        )
-        return {
-            "total_documents": total_docs,
-            "total_users": total_users,
-            "documents_by_user": [
-                {"user_id": uid, "count": count}
-                for uid, count in docs_by_user
-            ]
-        }
-    else:
-        my_docs = db.query(Document).filter(Document.user_id == current_user.id).count()
-        return {"your_documents": my_docs}
-
-
-def delete_document(
-    document_id: int,
-    current_user: User,
-    db: Session
-):
-    """
-    Xóa tài liệu và tệp vật lý.
-    """
+def delete_document(document_id: int, current_user: User, db: Session):
     doc = db.query(Document).filter(Document.id == document_id).first()
-
     if not doc:
-        raise HTTPException(status_code=404, detail="Tài liệu không tồn tại")
-
+        raise HTTPException(status_code=404, detail="Không tìm thấy tài liệu")
+    
     if doc.user_id != current_user.id and current_user.role != RoleEnum.ADMIN:
-        raise HTTPException(status_code=403, detail="Bạn không có quyền xóa tài liệu này")
+        raise HTTPException(status_code=403, detail="Không có quyền xóa")
 
-    # Xóa file vật lý nếu tồn tại
+    # Xóa file vật lý
     if doc.file_path and os.path.exists(doc.file_path):
-        try:
+        # Kiểm tra xem có doc nào khác dùng chung file_path (hash) không
+        other_using = db.query(Document).filter(Document.file_path == doc.file_path, Document.id != doc.id).count()
+        if other_using == 0:
             os.remove(doc.file_path)
-        except Exception as e:
-            # Vẫn tiếp tục xóa DB record nhưng log lỗi hoặc thông báo
-            print(f"Lỗi khi xóa file vật lý: {e}")
 
     db.delete(doc)
     db.commit()
     return True
+
+# ─────────────────────────────────────────────
+# Tag Logic
+# ─────────────────────────────────────────────
+
+def create_tag(tag_in: schemas.TagCreate, db: Session) -> Tag:
+    existing = db.query(Tag).filter(Tag.name == tag_in.name).first()
+    if existing:
+        return existing
+    new_tag = Tag(name=tag_in.name, color=tag_in.color)
+    db.add(new_tag)
+    db.commit()
+    db.refresh(new_tag)
+    return new_tag
+
+def get_tags(db: Session) -> List[Tag]:
+    return db.query(Tag).all()
+
+def assign_tag_to_document(doc_id: int, tag_id: int, db: Session):
+    doc = db.query(Document).filter(Document.id == doc_id).first()
+    tag = db.query(Tag).filter(Tag.id == tag_id).first()
+    if not doc or not tag:
+        raise HTTPException(status_code=404, detail="Doc hoặc Tag không tồn tại")
+    
+    if tag not in doc.tags:
+        doc.tags.append(tag)
+        db.commit()
+    return doc

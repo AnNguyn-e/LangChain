@@ -1,73 +1,80 @@
-from fastapi import APIRouter, Depends, File, UploadFile
+from typing import List, Optional
+from fastapi import APIRouter, Depends, UploadFile, File, Query
 from sqlalchemy.orm import Session
-from typing import List
 
-from app.schemas import schemas
 from app.database.database import get_db
-from app.services import auth_service, document_service
+from app.services import document_service
+from app.schemas import schemas
+from app.services.auth_service import get_current_user
 from app.model.user_model import User
 
-router = APIRouter(prefix="/documents", tags=["Documents"])
+router = APIRouter(prefix="/documents", tags=["documents"])
 
-
-# ─────────────────────────────────────────────
-# Upload Document
-# ─────────────────────────────────────────────
-
-@router.post("/upload", response_model=schemas.UploadDocumentResponse)
-async def upload_document(
-    file: UploadFile = File(...),
-    current_user: User = Depends(auth_service.get_current_user),
+@router.post("/upload-multiple", response_model=schemas.BulkUploadResponse)
+def upload_multiple_documents(
+    files: List[UploadFile] = File(...),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """
-    Tải lên tài liệu và xử lý embedding.
-    """
-    return document_service.upload_document(file, current_user, db)
-
-
-# ─────────────────────────────────────────────
-# List Documents
-# ─────────────────────────────────────────────
+    """Tải lên nhiều tài liệu cùng lúc."""
+    results = []
+    errors = []
+    
+    for file in files:
+        # Re-seek file just in case
+        file.file.seek(0)
+        try:
+            res = document_service.upload_document(file, current_user, db)
+            results.append(res)
+        except Exception as e:
+            errors.append({"filename": file.filename, "error": str(e)})
+            
+    return {"results": results, "errors": errors}
 
 @router.get("/", response_model=List[schemas.DocumentResponse])
-def get_documents(
-    current_user: User = Depends(auth_service.get_current_user),
+def list_documents(
+    search: Optional[str] = Query(None, description="Tìm kiếm theo tên file"),
+    tag_id: Optional[int] = Query(None, description="Lọc theo tag"),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """
-    Lấy danh sách tài liệu của người dùng hoặc tất cả nếu là Admin.
-    """
-    return document_service.get_all_documents(current_user, db)
+    """Lấy danh sách tài liệu với bộ lọc."""
+    return document_service.get_all_documents(current_user, db, search, tag_id)
 
-
-# ─────────────────────────────────────────────
-# Document Stats
-# ─────────────────────────────────────────────
-
-@router.get("/stats")
-def get_document_stats(
-    current_user: User = Depends(auth_service.get_current_user),
-    db: Session = Depends(get_db)
-):
-    """
-    Thống kê tài liệu.
-    """
-    return document_service.get_stats(current_user, db)
-
-
-# ─────────────────────────────────────────────
-# Delete Document
-# ─────────────────────────────────────────────
-
-@router.delete("/{document_id}", status_code=204)
+@router.delete("/{document_id}")
 def delete_document(
     document_id: int,
-    current_user: User = Depends(auth_service.get_current_user),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """
-    Xóa tài liệu.
-    """
+    """Xóa tài liệu."""
     document_service.delete_document(document_id, current_user, db)
-    return None
+    return {"message": "Xóa thành công"}
+
+# ─────────────────────────────────────────────
+# Tag Endpoints
+# ─────────────────────────────────────────────
+
+@router.get("/tags", response_model=List[schemas.TagResponse])
+def list_tags(db: Session = Depends(get_db)):
+    """Lấy danh sách tất cả các thẻ."""
+    return document_service.get_tags(db)
+
+@router.post("/tags", response_model=schemas.TagResponse)
+def create_tag(
+    tag_in: schemas.TagCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Tạo thẻ mới."""
+    return document_service.create_tag(tag_in, db)
+
+@router.post("/{document_id}/tags/{tag_id}")
+def assign_tag(
+    document_id: int,
+    tag_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Gắn thẻ cho tài liệu."""
+    return document_service.assign_tag_to_document(document_id, tag_id, db)

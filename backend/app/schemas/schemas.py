@@ -120,6 +120,23 @@ class RefreshToken(BaseModel):
     access_token: str
     token_type: str
 # ─────────────────────────────────────────────
+# Tag Schemas
+# ─────────────────────────────────────────────
+
+class TagBase(BaseModel):
+    name: str
+    color: Optional[str] = "#3b82f6"
+
+class TagCreate(TagBase):
+    pass
+
+class TagResponse(TagBase):
+    id: int
+
+    class Config:
+        from_attributes = True
+
+# ─────────────────────────────────────────────
 # Document Schemas
 # ─────────────────────────────────────────────
 
@@ -128,10 +145,13 @@ class DocumentResponse(BaseModel):
     id: int
     filename: str
     file_path: Optional[str] = None
+    file_size: Optional[int] = None
+    file_type: Optional[str] = None
     status: str
     chunk_count: int = 0
     error_message: Optional[str] = None
     created_at: datetime
+    tags: List[TagResponse] = []
 
     class Config:
         orm_mode = True
@@ -150,6 +170,10 @@ class UploadDocumentResponse(BaseModel):
     class Config:
         orm_mode = True
         from_attributes = True
+
+class BulkUploadResponse(BaseModel):
+    results: List[UploadDocumentResponse]
+    errors: List[dict] # {filename: str, error: str}
 
 
 # ─────────────────────────────────────────────

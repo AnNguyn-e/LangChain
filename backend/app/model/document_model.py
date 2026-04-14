@@ -3,6 +3,7 @@ from sqlalchemy.orm import relationship
 from datetime import datetime
 
 from app.database.database import Base
+from app.model.tag_model import document_tags
 
 
 class Document(Base):
@@ -12,6 +13,9 @@ class Document(Base):
 
     filename = Column(String, nullable=False)
     file_path = Column(String, nullable=True)
+    file_size = Column(Integer, nullable=True) # Bytes
+    file_type = Column(String, nullable=True)
+    file_hash = Column(String, index=True, nullable=True) # SHA-256 for deduplication
 
     user_id = Column(Integer, ForeignKey("users.id"))
 
@@ -26,3 +30,4 @@ class Document(Base):
 
     # Relationships
     owner = relationship("User", back_populates="documents")
+    tags = relationship("Tag", secondary=document_tags, back_populates="documents")
