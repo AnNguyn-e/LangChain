@@ -12,8 +12,15 @@ langchain-huggingface
 langchain-chroma
 langchain-openai
 pypdf
+python-docx
+python-pptx
 docx2txt
 unstructured
+beautifulsoup4
+markdown
+Pillow
+numpy
 pandas
 openpyxl
+xlrd
 rapidocr-onnxruntime

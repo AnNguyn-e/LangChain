@@ -20,7 +20,16 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from app.model.models import Base
+from app.database.database import Base
+from app.model.user_model import User
+from app.model.document_model import Document
+from app.model.document_metadata_model import DocumentMetadata
+from app.model.document_chunk_model import DocumentChunk
+from app.model.document_embedding_model import DocumentEmbedding
+from app.model.tag_model import Tag, document_tags
+from app.model.chats_model import Chat
+from app.model.chats_session import ChatSession
+
 target_metadata = Base.metadata
 
 # other values from the config, defined by the needs of env.py,

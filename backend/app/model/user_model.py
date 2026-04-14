@@ -17,4 +17,4 @@ class User(Base):
     hashed_password = Column(String(255), nullable=False)
     role = Column(Enum(RoleEnum), default=RoleEnum.USER, nullable=False)
     documents = relationship("Document", back_populates="owner")
-
+    chats = relationship("Chat", back_populates="user")

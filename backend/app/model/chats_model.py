@@ -11,6 +11,7 @@ class Chat(Base):
     id = Column(Integer, primary_key=True, index=True)
 
     user_id = Column(Integer, ForeignKey("users.id"))
+    session_id = Column(Integer, ForeignKey("chat_sessions.id"))
 
     question = Column(Text, nullable=False)
     answer = Column(Text, nullable=False)
@@ -22,3 +23,4 @@ class Chat(Base):
 
     # Relationships
     user = relationship("User", back_populates="chats")
+    session = relationship("ChatSession", back_populates="chats")
