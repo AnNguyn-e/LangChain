@@ -1,4 +1,4 @@
-from passlib.context import CryptContext
+import bcrypt
 from datetime import datetime, timedelta
 from jose import JWTError, jwt
 from typing import Optional
@@ -15,14 +15,46 @@ SECRET_KEY = "my_super_secret_key_for_this_project" # Replace with real secret i
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 1440 # 1 day
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
+# auth_service.py
+MAX_PASSWORD_BYTES = 72
 
-def verify_password(plain_password, hashed_password):
-    return pwd_context.verify(plain_password, hashed_password)
+import hashlib
 
-def get_password_hash(password):
-    return pwd_context.hash(password)
+def _truncate_password(password: str) -> str:
+    """Hash password with sha256 to bypass bcrypt's 72 bytes limit safely"""
+    return hashlib.sha256(password.encode("utf-8")).hexdigest()
+
+def _legacy_truncate_password(password: str) -> str:
+    """Old naive truncation for backward compatibility."""
+    encoded = password.encode("utf-8")
+    return encoded[:MAX_PASSWORD_BYTES].decode("utf-8", errors="ignore")
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    # Chuyển hash lấy từ DB thành dạng bytes
+    db_hash_bytes = hashed_password.encode("utf-8")
+    
+    # 1. Thử giải pháp SHA-256 mới
+    new_hashed_input = _truncate_password(plain_password).encode("utf-8")
+    try:
+        is_valid = bcrypt.checkpw(new_hashed_input, db_hash_bytes)
+    except Exception:
+        is_valid = False
+    
+    # 2. Xử lý tương thích ngược (Backward compatibility) cho các tài khoản cũ
+    if not is_valid:
+        old_hashed_input = _legacy_truncate_password(plain_password).encode("utf-8")
+        try:
+            is_valid = bcrypt.checkpw(old_hashed_input, db_hash_bytes)
+        except Exception:
+            is_valid = False
+        
+    return is_valid
+
+def hash_password(password: str) -> str:
+    new_hashed_input = _truncate_password(password).encode("utf-8")
+    return bcrypt.hashpw(new_hashed_input, bcrypt.gensalt()).decode("utf-8")
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode = data.copy()
@@ -105,7 +137,7 @@ def update_user(user_id: int, update_data: schemas.UserUpdate, current_user: Use
 
     # 4. Xử lý băm mật khẩu nếu có
     if "password" in update_dict:
-        update_dict["hashed_password"] = get_password_hash(update_dict.pop("password"))
+        update_dict["hashed_password"] = hash_password(update_dict.pop("password"))
 
     # 5. Kiểm tra trùng lặp username
     if "username" in update_dict and update_dict["username"] != db_user.username:
@@ -119,4 +151,4 @@ def update_user(user_id: int, update_data: schemas.UserUpdate, current_user: Use
 
     db.commit()
     db.refresh(db_user)
-    return db_user
+    return db_user

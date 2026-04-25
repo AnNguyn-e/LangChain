@@ -1,10 +1,13 @@
 import axios from 'axios';
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ? process.env.NEXT_PUBLIC_API_URL.replace(/\/+$/, '') : '/api';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
-  headers: { 'Content-Type': 'application/json' },
+  headers: { 
+    'Content-Type': 'application/json',
+    'ngrok-skip-browser-warning': 'true'
+  },
 });
 
 // Attach JWT token to every request
@@ -29,5 +32,32 @@ api.interceptors.response.use(
     return Promise.reject(error);
   }
 );
+
+export const documentApi = {
+  uploadMultiple: (files: File[]) => {
+    const formData = new FormData();
+    files.forEach((file) => formData.append('files', file));
+    return api.post('/documents/upload-multiple', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
+  list: (search?: string, tagId?: number) => {
+    return api.get('/documents', {
+      params: { search, tag_id: tagId },
+    });
+  },
+  delete: (id: number) => {
+    return api.delete(`/documents/${id}`);
+  },
+  getTags: () => {
+    return api.get('/documents/tags');
+  },
+  createTag: (name: string, color: string) => {
+    return api.post('/documents/tags', { name, color });
+  },
+  assignTag: (docId: number, tagId: number) => {
+    return api.post(`/documents/${docId}/tags/${tagId}`);
+  },
+};
 
 export default api;

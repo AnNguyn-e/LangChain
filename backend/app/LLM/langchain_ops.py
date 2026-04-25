@@ -11,23 +11,32 @@ from langchain_community.document_loaders import (
 )
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_openai import OpenAIEmbeddings
 from langchain_chroma import Chroma
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
+from app.processors.constants import LM_STUDIO_BASE_URL, EMBED_COLLECTION
 
 # Constants
 CHROMA_DB_DIR = "chroma_db"
 os.makedirs(CHROMA_DB_DIR, exist_ok=True)
 
-# Initialize embeddings and vector store
-embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
-vectorstore = Chroma(persist_directory=CHROMA_DB_DIR, embedding_function=embeddings)
+# Initialize embeddings and vector store via Local LM Studio
+embeddings = OpenAIEmbeddings(
+    base_url=LM_STUDIO_BASE_URL,
+    api_key="lm-studio",
+    check_embedding_ctx_length=False
+)
+vectorstore = Chroma(
+    collection_name=EMBED_COLLECTION,
+    persist_directory=CHROMA_DB_DIR,
+    embedding_function=embeddings
+)
 
-# Initialize LM Studio LLM
+# Initialize LM Studio LLM for Chat Generation
 llm = ChatOpenAI(
-    base_url="http://192.168.171.1:1234",
+    base_url=LM_STUDIO_BASE_URL,
     api_key="lm-studio",
     temperature=0.7,
 )
@@ -101,8 +110,11 @@ def get_answer(query: str, user_id: int = None, is_admin: bool = False):
         filter_dict["user_id"] = user_id
         
     retriever = vectorstore.as_retriever(
+        search_type="mmr",
         search_kwargs={
             "k": 3,
+            "fetch_k": 10,
+            "lambda_mult": 0.7,
             "filter": filter_dict if filter_dict else None
         }
     )
@@ -147,8 +159,11 @@ def get_answer_stream(query: str, user_id: int = None, is_admin: bool = False):
         filter_dict["user_id"] = user_id
         
     retriever = vectorstore.as_retriever(
+        search_type="mmr",
         search_kwargs={
             "k": 3,
+            "fetch_k": 10,
+            "lambda_mult": 0.7,
             "filter": filter_dict if filter_dict else None
         }
     )
