@@ -15,7 +15,7 @@ class Document(Base):
     file_path = Column(String, nullable=True)
     file_size = Column(Integer, nullable=True)   # Bytes
     file_type = Column(String, nullable=True)
-    file_hash = Column(String, index=True, nullable=True)  # SHA-256 for deduplication
+    file_hash = Column(String, index=True, nullable=True)  
 
     user_id = Column(Integer, ForeignKey("users.id"))
 

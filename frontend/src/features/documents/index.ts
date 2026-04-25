@@ -1,0 +1,11 @@
+export { documentService } from './services/documentService';
+export { uploadDocumentsUseCase } from './usecases/uploadDocumentsUseCase';
+export { deleteDocumentUseCase } from './usecases/deleteDocumentUseCase';
+export { tagUseCases } from './usecases/tagUseCases';
+export { useDocumentList, useUploadDocuments, useDeleteDocument, useRestoreDocument, formatFileSize } from './hooks/useDocuments';
+export { useTagList, useCreateTag, useAssignTag, useRemoveTag } from './hooks/useTags';
+export { DocumentCard } from './components/DocumentCard';
+export { DocumentGrid } from './components/DocumentGrid';
+export { TagSidebar } from './components/TagSidebar';
+export { UploadButton } from './components/UploadButton';
+export type { Document, Tag, UploadError, UploadResult, DocumentStatus, DocumentVisibility } from './models/document';

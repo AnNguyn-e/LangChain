@@ -160,6 +160,19 @@ class DocumentMetadataResponse(BaseModel):
         from_attributes = True
 
 
+class DocumentMetadataUpdate(BaseModel):
+    department: Optional[str] = None
+    description: Optional[str] = None
+    category: Optional[str] = None
+    version: Optional[str] = None
+    confidentiality: Optional[str] = None
+    title: Optional[str] = None
+    author: Optional[str] = None
+    subject: Optional[str] = None
+    keywords: Optional[str] = None
+    language: Optional[str] = None
+
+
 # ─────────────────────────────────────────────
 # Document Schemas
 # ─────────────────────────────────────────────
@@ -175,11 +188,21 @@ class DocumentResponse(BaseModel):
     chunk_count: int = 0
     error_message: Optional[str] = None
     created_at: datetime
+    updated_at: datetime
     tags: List[TagResponse] = []
     doc_metadata: Optional[DocumentMetadataResponse] = None
 
     class Config:
         from_attributes = True
+
+
+class DocumentUpdate(BaseModel):
+    filename: Optional[str] = None
+    doc_metadata: Optional[DocumentMetadataUpdate] = None
+
+
+class BulkDeleteRequest(BaseModel):
+    ids: List[int]
 
 
 class UploadDocumentResponse(BaseModel):
