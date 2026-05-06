@@ -84,6 +84,11 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     user = db.query(User).filter(User.username == token_data.username).first()
     if user is None:
         raise credentials_exception
+    if not getattr(user, 'is_active', True):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Inactive user"
+        )
     return user
 
 def get_current_admin_user(current_user: User = Depends(get_current_user)):
@@ -93,6 +98,16 @@ def get_current_admin_user(current_user: User = Depends(get_current_user)):
             detail="The user doesn't have enough privileges"
         )
     return current_user
+
+def require_role(allowed_roles: list[RoleEnum]):
+    def role_checker(current_user: User = Depends(get_current_user)):
+        if current_user.role not in allowed_roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You don't have enough privileges to perform this action"
+            )
+        return current_user
+    return role_checker
 
 def delete_user(user_id: int, current_user: User, db: Session):
     """

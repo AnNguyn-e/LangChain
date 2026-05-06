@@ -150,9 +150,10 @@ Trả lời:"""
     
     return answer, sources
 
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 import json
 
-def get_answer_stream(query: str, user_id: int = None, is_admin: bool = False):
+def get_answer_stream(query: str, user_id: int = None, is_admin: bool = False, chat_history: List[Any] = []):
     """Retrieve internal data and generate answer via stream."""
     filter_dict = {}
     if not is_admin and user_id is not None:
@@ -170,33 +171,48 @@ def get_answer_stream(query: str, user_id: int = None, is_admin: bool = False):
     
     docs = retriever.invoke(query)
     sources = list(set([doc.metadata.get("source", "Unknown") for doc in docs]))
-    context = "\n\n".join([doc.page_content for doc in docs])
+    context = "\\n\\n".join([doc.page_content for doc in docs])
     
     if not docs:
          msg = "Tôi không tìm thấy thông tin nào liên quan đến câu hỏi trong các tài liệu hiện có."
-         yield f"data: {json.dumps({'content': msg})}\n\n"
-         yield f"data: {json.dumps({'sources': sources})}\n\n"
-         yield "data: [DONE]\n\n"
+         yield f"data: {json.dumps({'content': msg})}\\n\\n"
+         yield f"data: {json.dumps({'sources': sources})}\\n\\n"
+         yield "data: [DONE]\\n\\n"
          return
 
-    template = """Bạn là trợ lý AI hữu ích hỗ trợ nhân viên nội bộ công ty quản lý tài liệu.
+    system_template = """Bạn là trợ lý AI hữu ích hỗ trợ nhân viên nội bộ công ty quản lý tài liệu.
 Sử dụng các thông tin ngữ cảnh được cung cấp dưới đây để trả lời câu hỏi, thông tin này được lấy từ dữ liệu nội bộ.
 Nếu thông tin không liên quan gì, hãy báo rằng bạn không có câu trả lời.
 KHÔNG được bịa đặt thông tin. Luôn trả lời bằng tiếng Việt một cách rõ ràng.
 
 Ngữ cảnh:
-{context}
-
-Câu hỏi: {question}
-
-Trả lời:"""
-    prompt = PromptTemplate.from_template(template)
+{context}"""
+    
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", system_template),
+        MessagesPlaceholder(variable_name="chat_history"),
+        ("human", "{question}")
+    ])
     
     chain = prompt | llm | StrOutputParser()
     
-    for chunk in chain.stream({"context": context, "question": query}):
-        yield f"data: {json.dumps({'content': chunk})}\n\n"
+    for chunk in chain.stream({
+        "context": context, 
+        "chat_history": chat_history,
+        "question": query
+    }):
+        yield f"data: {json.dumps({'content': chunk})}\\n\\n"
         
     # Send the final sources at the end
-    yield f"data: {json.dumps({'sources': sources})}\n\n"
-    yield "data: [DONE]\n\n"
+    yield f"data: {json.dumps({'sources': sources})}\\n\\n"
+    yield "data: [DONE]\\n\\n"
+
+def summarize_chat_history(chat_history: List[Any]) -> str:
+    """Summarize a long chat history to save tokens."""
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", "Bạn là một trợ lý tóm tắt. Hãy tóm tắt lại nội dung chính của đoạn hội thoại sau một cách ngắn gọn, giữ lại các thông tin quan trọng nhất."),
+        MessagesPlaceholder(variable_name="chat_history"),
+        ("human", "Hãy tóm tắt đoạn hội thoại trên.")
+    ])
+    chain = prompt | llm | StrOutputParser()
+    return chain.invoke({"chat_history": chat_history})

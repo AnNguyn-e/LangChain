@@ -18,8 +18,8 @@ IMAGE_OCR_DPI     = 300    # DPI mục tiêu khi trích xuất trang PDF
 EMBED_BATCH_SIZE  = 16     # số lượng chunks mỗi batch embedding (tối ưu cho local model)
 MAX_WORKERS       = 4      # số luồng xử lý song song (trang PDF, v.v.)
 CHROMA_DB_DIR     = "chroma_db"
-EMBED_MODEL_NAME  = "local-embedding-model" # Model name from LM Studio (nomic, etc.)
+EMBED_MODEL_NAME  = "nomic-embed-text:latest" # Model name from LM Studio (nomic, etc.)
 EMBED_COLLECTION  = "document_chunks"
 
 # Local AI (LM Studio / Ollama via OpenAI spec)
-LM_STUDIO_BASE_URL = "http://127.0.0.1:1234/v1"
+LM_STUDIO_BASE_URL = " http://192.168.171.1:1234"

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, ForeignKey, DateTime, Text
+from sqlalchemy import Column, Integer, String, ForeignKey, DateTime, Text, Boolean
 from sqlalchemy.orm import relationship
 from datetime import datetime
 
@@ -21,6 +21,9 @@ class Document(Base):
 
     status = Column(String, default="processing")
     # processing | completed | failed
+    
+    is_deleted = Column(Boolean, default=False)
+    visibility = Column(String, default="private") # private, department, public
 
     chunk_count = Column(Integer, default=0)
 
@@ -28,6 +31,7 @@ class Document(Base):
 
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    deleted_at = Column(DateTime, nullable=True)
 
     # Relationships
     owner = relationship("User", back_populates="documents")

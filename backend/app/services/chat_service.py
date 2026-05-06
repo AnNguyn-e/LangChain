@@ -34,8 +34,32 @@ async def generate_chat_stream(db: Session, session_id: int, user_id: int, role:
         
     is_admin = (role == RoleEnum.ADMIN)
     
+    # Retrieve past messages
+    past_messages = db.query(Chat).filter(Chat.session_id == session_id).order_by(Chat.created_at.asc()).all()
+    
+    from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+    chat_history = []
+    
+    # Add summary as system message if it exists
+    if session.summary:
+        chat_history.append(SystemMessage(content=f"Tóm tắt các cuộc hội thoại trước: {session.summary}"))
+        
+    # Build history (sliding window of last 6 messages, 3 pairs)
+    recent_messages = past_messages[-6:]
+    for msg in recent_messages:
+        chat_history.append(HumanMessage(content=msg.question))
+        chat_history.append(AIMessage(content=msg.answer))
+        
+    # Summarize if history gets too long (e.g., > 10 messages)
+    if len(past_messages) > 10:
+        # We should summarize the old messages in a background task ideally, but for simplicity here:
+        from app.LLM.langchain_ops import summarize_chat_history
+        new_summary = summarize_chat_history(chat_history)
+        session.summary = new_summary
+        db.commit()
+    
     # Create an active generator from LangChain
-    answer_generator = get_answer_stream(query, user_id, is_admin)
+    answer_generator = get_answer_stream(query, user_id, is_admin, chat_history=chat_history)
     
     full_answer = ""
     sources = []
